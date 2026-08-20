@@ -9,6 +9,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 swiftc -O -o "$APP/Contents/MacOS/G3MSidekeys" Sources/main.swift
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # 用本地自签名证书签名 (身份稳定, 权限授予不会丢失;
 # 对外正式分发建议改用 Developer ID + 公证)
