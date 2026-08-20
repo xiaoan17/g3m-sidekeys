@@ -28,7 +28,12 @@ private enum DefaultsKey {
 
 // MARK: - 调试日志
 
-private let kLogPath = "/Users/anbc/Desktop/g3m-sidekeys/events.log"
+private let kLogPath: String = {
+    let home = NSHomeDirectory()
+    let dir = "\(home)/Library/Logs/G3MSidekeys"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    return "\(dir)/events.log"
+}()
 
 private func debugLog(_ msg: String) {
     let line = "\(Date()): \(msg)\n"
