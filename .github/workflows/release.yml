@@ -20,7 +20,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 选择 Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.app
+        # 不写死版本, 用 runner 默认的 Xcode, 避免 runner 镜像换版本后直接失效
+        run: |
+          echo "使用 Xcode: $(xcodebuild -version | head -1)"
 
       - name: 跑单元测试
         run: ./build.sh test
@@ -36,7 +38,8 @@ jobs:
           fetch-depth: 0   # 需要完整 git 历史来算 build number
 
       - name: 选择 Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.app
+        run: |
+          echo "使用 Xcode: $(xcodebuild -version | head -1)"
 
       - name: 读取版本号
         id: ver
@@ -48,8 +51,9 @@ jobs:
       - name: 单元测试
         run: ./build.sh test
 
-      # CI 上没有本地自签名证书, 走 ad-hoc 签名分支。
-      # 正式对外分发请用带 Developer ID 证书的 release 工作流 (见 README)。
+      # CI 上没有本机的自签名证书, build.sh 会自动回退到 ad-hoc 签名。
+      # 正式对外分发 (免去「右键→打开」提示) 需要配一个带 Developer ID
+      # 证书的 Secret, 见 README「分发说明」。
       - name: 构建 App
         run: ./build.sh build
 
