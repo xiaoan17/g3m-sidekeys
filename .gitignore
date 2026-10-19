@@ -1,5 +1,9 @@
 .DS_Store
-events.log
-G3MSidekeys.app
-g3m-probe
+
+# 构建产物
+G3MSidekeys.app/
+.build/
 *.zip
+g3m-probe
+events.log
+events.log.*

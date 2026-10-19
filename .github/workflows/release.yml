@@ -1,0 +1,63 @@
+name: Build & Release
+
+# 推送 tag (vX.Y.Z) 时构建并发布 Release; 其他 push 只跑单元测试。
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: 单元测试
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.app
+
+      - name: 跑单元测试
+        run: ./build.sh test
+
+  release:
+    name: 构建 & 发布
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 需要完整 git 历史来算 build number
+
+      - name: 选择 Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.app
+
+      - name: 读取版本号
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: 写入 VERSION
+        run: echo "${{ steps.ver.outputs.version }}" > VERSION
+
+      - name: 单元测试
+        run: ./build.sh test
+
+      # CI 上没有本地自签名证书, 走 ad-hoc 签名分支。
+      # 正式对外分发请用带 Developer ID 证书的 release 工作流 (见 README)。
+      - name: 构建 App
+        run: ./build.sh build
+
+      - name: 打包
+        run: ./build.sh zip
+
+      - name: 上传到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: G3MSidekeys-v${{ steps.ver.outputs.version }}.zip
+          generate_release_notes: true
