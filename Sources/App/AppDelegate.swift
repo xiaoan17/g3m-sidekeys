@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let tapManager = EventTapManager()
     private var statusItem: NSStatusItem!
+    private var bindingSettings: BindingSettingsWindowController?
 
     // MARK: - 启动
 
@@ -85,7 +86,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleSwapped() {
-        AppState.shared.swapped.toggle()
+        AppState.shared.swapSideBindings()
+    }
+
+    /// 打开按键绑定设置窗口
+    @objc private func openBindingSettings() {
+        if bindingSettings == nil {
+            bindingSettings = BindingSettingsWindowController()
+        }
+        bindingSettings?.present()
     }
 
     @objc private func cycleLogLevel() {
@@ -174,84 +183,138 @@ extension AppDelegate: NSMenuDelegate {
 
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
+        // 关闭 macOS 11+ 的「自动给菜单项加图标留白」行为,
+        // 否则每一行左侧都会多出一块空白, 菜单看上去又宽又散。
+        menu.autoenablesItems = false
 
         let state = AppState.shared
 
-        // 映射开关
-        let toggle = NSMenuItem(title: "启用侧键映射", action: #selector(toggleEnabled), keyEquivalent: "")
+        // ── 状态区: 一句话说清「现在是什么状态」 ──
+        let statusLine = NSMenuItem(title: statusTitle(for: state), action: nil, keyEquivalent: "")
+        statusLine.isEnabled = false
+        menu.addItem(statusLine)
+        menu.addItem(.separator())
+
+        // ── 主操作 ──
+        let toggle = NSMenuItem(title: state.enabled ? "暂停侧键映射" : "启用侧键映射",
+                                action: #selector(toggleEnabled), keyEquivalent: "")
         toggle.target = self
         toggle.state = state.enabled ? .on : .off
         menu.addItem(toggle)
 
-        // 交换两个侧键
-        let swap = NSMenuItem(title: "交换 复制/粘贴 按键", action: #selector(toggleSwapped), keyEquivalent: "")
+        let settings = NSMenuItem(title: "按键绑定设置…", action: #selector(openBindingSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+
+        // 交换两个侧键的绑定 (快捷操作, 完整自定义在「按键绑定设置」里)
+        let swap = NSMenuItem(title: "交换侧键 1 与 2", action: #selector(toggleSwapped), keyEquivalent: "")
         swap.target = self
-        swap.state = state.swapped ? .on : .off
         menu.addItem(swap)
 
-        let mapping = NSMenuItem(title: SidekeyMapper.mappingDescription(swapped: state.swapped),
-                                 action: nil, keyEquivalent: "")
-        mapping.isEnabled = false
-        menu.addItem(mapping)
+        // 绑定明细放进子菜单 —— 以前这里是一行 69 个字的摘要,
+        // 直接把菜单撑到整屏宽度, 文字还会溢到菜单外面。
+        let mappings = NSMenuItem(title: "当前绑定", action: nil, keyEquivalent: "")
+        mappings.submenu = mappingSubmenu(for: state.bindings)
+        menu.addItem(mappings)
 
         menu.addItem(.separator())
 
-        // 权限状态
+        // ── 权限: 只在没授全的时候占位置 ──
         let axOK = AXIsProcessTrusted()
         let listenOK = CGPreflightListenEventAccess()
-        menu.addItem(permissionItem(title: "辅助功能权限", granted: axOK,
-                                    action: #selector(openAccessibilitySettings)))
-        menu.addItem(permissionItem(title: "输入监控权限", granted: listenOK,
-                                    action: #selector(openInputMonitoringSettings)))
-        if state.enabled && !tapManager.isRunning {
-            let warn = NSMenuItem(title: "⚠️ 事件监听未运行 —— 请授予权限后重启本 App",
-                                  action: nil, keyEquivalent: "")
-            warn.isEnabled = false
-            menu.addItem(warn)
+        if !axOK || !listenOK || (state.enabled && !tapManager.isRunning) {
+            if !axOK {
+                menu.addItem(permissionItem(title: "辅助功能权限未授予", granted: false,
+                                            action: #selector(openAccessibilitySettings)))
+            }
+            if !listenOK {
+                menu.addItem(permissionItem(title: "输入监控权限未授予", granted: false,
+                                            action: #selector(openInputMonitoringSettings)))
+            }
+            if state.enabled && !tapManager.isRunning {
+                let warn = NSMenuItem(title: "监听未运行 · 授予权限后请重启 App",
+                                      action: #selector(restartApp), keyEquivalent: "")
+                warn.target = self
+                menu.addItem(warn)
+            }
+            menu.addItem(.separator())
         }
 
-        menu.addItem(.separator())
-
-        // 日志级别
-        let logItem = NSMenuItem(title: "日志级别: \(state.logLevel.displayName)",
-                                 action: #selector(cycleLogLevel), keyEquivalent: "")
-        logItem.target = self
-        menu.addItem(logItem)
-
-        let retentionItem = NSMenuItem(title: "日志保留: \(state.logRetentionDays) 天",
-                                       action: #selector(cycleLogRetention), keyEquivalent: "")
-        retentionItem.target = self
-        menu.addItem(retentionItem)
-
-        let reveal = NSMenuItem(title: "在访达中显示日志", action: #selector(revealLogFile), keyEquivalent: "")
-        reveal.target = self
-        menu.addItem(reveal)
+        // ── 二级设置收进「更多设置」──
+        let more = NSMenuItem(title: "更多设置", action: nil, keyEquivalent: "")
+        more.submenu = moreSettingsMenu(for: state)
+        menu.addItem(more)
 
         menu.addItem(.separator())
-
-        // 开机自启
-        let loginItem = NSMenuItem(title: "开机自动启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        loginItem.target = self
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(loginItem)
-
-        let restart = NSMenuItem(title: "重新启动", action: #selector(restartApp), keyEquivalent: "r")
-        restart.target = self
-        menu.addItem(restart)
-
-        menu.addItem(.separator())
-
-        let version = NSMenuItem(title: "版本 \(Bundle.main.appVersion)", action: nil, keyEquivalent: "")
-        version.isEnabled = false
-        menu.addItem(version)
 
         let quit = NSMenuItem(title: "退出 G3M Sidekeys", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
     }
 
+    /// 菜单顶部的一行状态摘要 (控制在很短的一行内)
+    private func statusTitle(for state: AppState) -> String {
+        if !state.enabled { return "映射已暂停" }
+        let axOK = AXIsProcessTrusted()
+        let listenOK = CGPreflightListenEventAccess()
+        if !axOK || !listenOK { return "缺少权限 · 映射未生效" }
+        if !tapManager.isRunning { return "监听未运行" }
+        return "映射运行中 · \(Bundle.main.appVersion)"
+    }
+
+    /// 「当前绑定」子菜单: 一行一个来源, 不再横向堆叠
+    private func mappingSubmenu(for table: BindingTable) -> NSMenu {
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        for source in BindingSource.allCases {
+            let item = NSMenuItem(title: "\(source.displayName)  →  \(table[source].displayName)",
+                                  action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
+    /// 「更多设置」子菜单
+    private func moreSettingsMenu(for state: AppState) -> NSMenu {
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+
+        let loginItem = NSMenuItem(title: "开机自动启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        submenu.addItem(loginItem)
+
+        submenu.addItem(.separator())
+
+        let logItem = NSMenuItem(title: "日志级别: \(state.logLevel.displayName)",
+                                 action: #selector(cycleLogLevel), keyEquivalent: "")
+        logItem.target = self
+        submenu.addItem(logItem)
+
+        let retentionItem = NSMenuItem(title: "日志保留: \(state.logRetentionDays) 天",
+                                       action: #selector(cycleLogRetention), keyEquivalent: "")
+        retentionItem.target = self
+        submenu.addItem(retentionItem)
+
+        let reveal = NSMenuItem(title: "在访达中显示日志", action: #selector(revealLogFile), keyEquivalent: "")
+        reveal.target = self
+        submenu.addItem(reveal)
+
+        let resetPerms = NSMenuItem(title: "打开辅助功能设置", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+        resetPerms.target = self
+        submenu.addItem(.separator())
+        submenu.addItem(resetPerms)
+
+        let restart = NSMenuItem(title: "重新启动", action: #selector(restartApp), keyEquivalent: "r")
+        restart.target = self
+        submenu.addItem(restart)
+
+        return submenu
+    }
+
     private func permissionItem(title: String, granted: Bool, action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: "\(title): \(granted ? "✅ 已授予" : "❌ 未授予 (点击去设置)")",
+        let item = NSMenuItem(title: granted ? "\(title): 已授予" : "\(title) · 点此去授予",
                               action: granted ? nil : action, keyEquivalent: "")
         item.target = self
         return item

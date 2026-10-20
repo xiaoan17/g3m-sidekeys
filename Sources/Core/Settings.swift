@@ -13,6 +13,8 @@ enum SettingsKey {
     static let swapped = "g3m.swapped"
     static let logLevel = "g3m.logLevel"
     static let logRetentionDays = "g3m.logRetentionDays"
+    /// 自定义绑定表 (JSON)
+    static let bindings = "g3m.bindings"
     /// 老版本用的是 "enabled" / "swapped"（无前缀），这里做一次性迁移
     static let legacyEnabled = "enabled"
     static let legacySwapped = "swapped"
@@ -55,12 +57,41 @@ enum Settings {
     }
 
     /// 是否交换复制/粘贴，默认不交换
+    ///
+    /// v1.2.0 起这个开关只用于**一次性迁移**: 老版本的 "交换" 语义等价于
+    /// 「把侧键1/侧键2 的绑定对调」, 迁移进绑定表之后就不再需要它了。
     static var swapped: Bool {
         get {
             migrateIfNeeded()
             return defaults.bool(forKey: SettingsKey.swapped)
         }
         set { defaults.set(newValue, forKey: SettingsKey.swapped) }
+    }
+
+    /// 自定义绑定表
+    ///
+    /// 首次读取时若本地还没有绑定表, 就按默认值生成 —— 并把老版本的
+    /// 「交换复制/粘贴」开关折算成侧键1/侧键2 绑定对调, 保证升级后
+    /// 用户的手感不变。
+    static var bindings: BindingTable {
+        get {
+            if let data = defaults.data(forKey: SettingsKey.bindings),
+               let table = try? JSONDecoder().decode(BindingTable.self, from: data) {
+                return table
+            }
+            return defaultBindings()
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: SettingsKey.bindings)
+        }
+    }
+
+    /// 默认绑定表 (考虑老版本的「交换」开关)
+    static func defaultBindings() -> BindingTable {
+        migrateIfNeeded()
+        let legacy = defaults.bool(forKey: SettingsKey.swapped)
+        return legacy ? BindingTable.default.swappingSides() : BindingTable.default
     }
 
     /// 日志级别，默认只记错误

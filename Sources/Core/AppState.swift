@@ -38,13 +38,13 @@ final class AppState {
     static let shared = AppState()
 
     private var _enabled: Bool
-    private var _swapped: Bool
+    private var _bindings: BindingTable
     private var _logLevel: LogLevel
     private var _logRetentionDays: Int
 
     init() {
         _enabled = Settings.enabled
-        _swapped = Settings.swapped
+        _bindings = Settings.bindings
         _logLevel = Settings.logLevel
         _logRetentionDays = Settings.logRetentionDays
     }
@@ -62,15 +62,20 @@ final class AppState {
         }
     }
 
-    /// 是否交换复制/粘贴
-    var swapped: Bool {
-        get { _swapped }
+    /// 自定义绑定表 —— 物理来源 → 动作 的映射
+    var bindings: BindingTable {
+        get { _bindings }
         set {
-            guard newValue != _swapped else { return }
-            _swapped = newValue
-            Settings.swapped = newValue
+            guard newValue != _bindings else { return }
+            _bindings = newValue
+            Settings.bindings = newValue
             notifyChange()
         }
+    }
+
+    /// 交换侧键 1 / 2 的绑定 (老版「交换复制/粘贴」的等价操作)
+    func swapSideBindings() {
+        bindings = _bindings.swappingSides()
     }
 
     /// 日志级别
@@ -100,7 +105,7 @@ final class AppState {
 
     /// 供事件处理路径使用的轻量快照 (值类型, 无锁开销)
     var mappingContext: MappingContext {
-        MappingContext(enabled: _enabled, swapped: _swapped, rightControlDown: false)
+        MappingContext(enabled: _enabled, bindings: _bindings, rightControlDown: false)
     }
 
     // MARK: - 通知
