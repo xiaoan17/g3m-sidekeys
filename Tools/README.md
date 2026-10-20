@@ -6,10 +6,14 @@
 ## verify_binding_ui.swift — 验证下拉框真的能选中
 
 ```bash
-swiftc -O -target arm64-apple-macos13.0 -o /tmp/verify \
+# 注意: 顶层代码的文件必须叫 main.swift, 否则 swiftc 会报
+# "expressions are not allowed at the top level"
+mkdir -p /tmp/verifytool
+cp Tools/verify_binding_ui.swift /tmp/verifytool/main.swift
+swiftc -O -target arm64-apple-macos13.0 -o /tmp/verifytool/verify \
   Sources/Core/*.swift Sources/Capture/*.swift Sources/Diagnostics/*.swift Sources/App/*.swift \
-  Tools/verify_binding_ui.swift
-/tmp/verify
+  /tmp/verifytool/main.swift
+/tmp/verifytool/verify
 ```
 
 它不会去点界面，而是**走和用户点击完全一样的那条代码路径**

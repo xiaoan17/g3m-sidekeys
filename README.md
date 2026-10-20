@@ -11,6 +11,62 @@
 - 兼容标准上报 button 3/4 的鼠标侧键（拦截并吞掉原始事件，浏览器不会再触发前进/后退）
 - **不记录你的任何按键**（详见「隐私」）
 
+## v1.3.0 界面与逻辑修订
+
+这一版做两件事：**修掉三个「看起来能跑、结果是错的」核心 bug**，以及**把界面统一到一套 design token 上**。
+
+### 修掉的三个核心 bug
+
+这三个都是**实际复现过**的，不是读代码猜的：
+
+1. **「按住左 Command / 左 Control / Shift」会打出 `˚`。**
+   之前 `ModifierText` 无论按住哪个修饰键，都按 `⌥` 去换算字符。
+   但 ⌘ / ⌃ 根本不改变键帽上的字符（⌘K 的字符仍然是 `k`）—— 它们的作用在应用读到的 `modifierFlags` 上。
+   现在只有 ⌥ / ⇧ 走「改写字符」，⌘ / ⌃ 走「补 modifierFlags」。
+
+2. **用户自己按住的 Shift 被整个吞掉。**
+   `ModifierText` 根本不接收事件自带的 flags，所以「按住右 Option + 按住 Shift + K」算出来和「只按 Option」一模一样。
+   现在事件自带的修饰键会一起参与换算，并纳入缓存键（否则带 Shift / 不带 Shift 的查询会互相命中缓存）。
+
+3. **`UCKeyTranslate` 的修饰键编码方向搞反了。**
+   它要的是低字节形式（`cmd=0x01` / `shift=0x02` / `option=0x08` / `control=0x10`），
+   传 Carbon 的高字节形式（`0x0800`）会**静默失效** —— 实测传 `0x0800` 得到的是普通 `k` 而不是 `˚`，不报任何错。
+
+另外还修了几处：日志布局标识改用输入源 ID（原来用指针地址，会误判）、
+每条日志复用同一个 `ISO8601DateFormatter`（原来每次新建，实测慢 222 倍，且跑在事件回调里）、
+日志保留天数的跨线程数据竞争。
+
+单元测试从 180 项增加到 **202 项断言**，把上面每一条都锁住了。
+
+### 界面改进
+
+- 引入 **`Sources/App/DesignTokens.swift`** —— 全局唯一的设计 token（间距 / 圆角 / 字号 / 颜色 / 动效）。
+  以前界面里散落着魔法数字（20/18/16/14/12、圆角 10、字号 15/13/12/11……），现在集中成语义 token，浅色深色自动适配。
+- 设置窗口右上角加了**状态胶囊**，一眼看出「映射运行中 / 已暂停」。
+- 改过默认值的行会显示**「已自定义」小圆点**，不用逐行比对。
+- 鼠标**悬停整行有高亮**，明确这一行是可点的。
+- 快捷键徽标**紧挨下拉框**（原来被推到窗口最右边，关联很弱），「恢复默认」也右对齐收口。
+- 卡片补上副标题，不再是干巴巴的四个字。
+
+设置窗口效果（由**真实界面离屏渲染**，不是手工拼图）：
+
+| 浅色 | 深色 |
+| --- | --- |
+| ![浅色](docs/ui-preview-light.png) | ![深色](docs/ui-preview-dark.png) |
+
+> 界面改完可以直接重新出图：
+> ```bash
+> mkdir -p /tmp/uishot && cp Tools/capture_ui.swift /tmp/uishot/main.swift
+> swiftc -O -target arm64-apple-macos13.0 -o /tmp/uishot/capture \
+>   Sources/Core/*.swift Sources/Capture/*.swift Sources/Diagnostics/*.swift Sources/App/*.swift \
+>   /tmp/uishot/main.swift
+> /tmp/uishot/capture docs/
+> ```
+
+### 架构梳理
+
+完整的分层说明、已确认问题清单、以及按性价比排序的后续建议，见 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**。
+
 ## v1.2.1 界面修订
 
 这一版主要修界面上两处「看起来坏掉了」的地方：
@@ -143,19 +199,27 @@ Sources/
   Core/                   纯逻辑层（不依赖 UI / 文件系统，可单元测试）
     Binding.swift           绑定模型: 来源 / 动作 / 组合键 / 绑定表
     SidekeyMapper.swift     决策核心: (事件, 状态) → 动作
+    ModifierText.swift      修饰键 → 字符 的换算
     AppState.swift          单一数据源 + 变更通知
     Settings.swift          UserDefaults 持久化
   Capture/                事件捕获层
     EventTapManager.swift   CGEventTap 生命周期 + 事件搬运
     EventInjector.swift     组合键 / 鼠标点击注入
   Diagnostics/
-    Logger.swift            可开关 / 0600 / 自动轮转 / 异步写
-  App/
+    Logger.swift            可开关 / 0600 / 自动轮转 / 异步
+  App/                    界面层
     AppDelegate.swift               菜单栏界面
     BindingSettingsWindowController.swift  按键绑定设置窗口
     ShortcutRecorder.swift           快捷键录制面板
+    DesignTokens.swift               全局设计 token（间距/圆角/字号/颜色）
 Tests/
   run_tests.swift          SidekeyMapper / BindingTable 单元测试
+Tools/
+  verify_binding_ui.swift  验证下拉框真的能选中
+  capture_ui.swift         把设置窗口渲染成 PNG（浅色/深色）
+  check_modifier_state.swift  检查修饰键有没有卡住
+docs/
+  ARCHITECTURE.md          架构梳理 + 后续建议
 ```
 
 核心决策逻辑全部集中在 `SidekeyMapper.decide(...)`，是一个不碰 UI、不碰磁盘的纯函数，因此可以脱离系统事件流直接跑单元测试：

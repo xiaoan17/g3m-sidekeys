@@ -154,7 +154,11 @@ final class EventTapManager {
         // 诊断: 鼠标按键事件原样记录 —— 排查「按了没反应」时,
         // 先要能分清「事件根本没到」和「到了但被决策层忽略」。
         // 只在诊断级别下写, 不影响默认的「仅错误」日志。
-        if type == .otherMouseDown || type == .otherMouseUp || type == .rightMouseDown {
+        //
+        // 注意: 这里先判断级别再做字符串拼接 —— 事件回调有严格的时间预算,
+        // 无谓的字符串插值 + 内存分配会拖慢热路径。
+        if Logger.shared.isDiagnosticEnabled,
+           type == .otherMouseDown || type == .otherMouseUp || type == .rightMouseDown {
             Logger.shared.diagnostic(
                 "鼠标事件: \(type == .otherMouseDown ? "otherDown" : type == .otherMouseUp ? "otherUp" : "rightDown") button=\(button)"
             )
@@ -196,7 +200,8 @@ final class EventTapManager {
 
         case .rewrite(let newKeycode, let newFlags):
             // 记录 RightCtrl↓ 与 C/V↓ 的间隔, 仅诊断用途
-            if type == .keyDown, let downAt = rightControlDownAtDate {
+            if Logger.shared.isDiagnosticEnabled,
+               type == .keyDown, let downAt = rightControlDownAtDate {
                 let delta = Date().timeIntervalSince(downAt) * 1000
                 Logger.shared.diagnostic(String(format: "侧键转换: RightCtrl→键 间隔 %.1f ms", delta))
             }

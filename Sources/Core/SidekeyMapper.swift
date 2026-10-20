@@ -193,8 +193,14 @@ enum SidekeyMapper {
         //    输入法照样输出普通字符。真正有效的是改写 unicode 串。
         //    换算不出来 (比如功能键) 时, 退回到补 flags 的老做法,
         //    至少让应用读到的 modifierFlags 是对的。
+        //
+        //    但**只对会改变字形的修饰键**才改写字符 (⌥ / ⇧):
+        //    ⌘ 和 ⌃ 不改变键帽上的字符 (⌘K 仍然是 "k"), 它们的作用在
+        //    应用读到的 modifierFlags 上。v1.3.0 之前一律改写字符,
+        //    于是「按住左 Command」会打出 "˚" —— 完全是错的。
         if let held = context.heldModifier, keycode != rightControlKeyCode {
-            if let text = ModifierText.character(for: keycode, holding: held) {
+            if ModifierText.altersGlyph(held),
+               let text = ModifierText.character(for: keycode, holding: held, eventFlags: flags) {
                 return .rewriteText(text)
             }
             var newFlags = flags

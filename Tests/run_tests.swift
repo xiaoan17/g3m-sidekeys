@@ -172,8 +172,16 @@ testCase("按住修饰键: 换算不出字符时回退到补 flags") {
 testCase("按住修饰键: 原有修饰键参与字符换算 (⇧⌥)") {
     var c = ctx()
     c.heldModifier = .rightOption
-    // 按住 Shift 时再叠加 ⌥, 换算是另一组字符; 只要不是普通 'K' 就说明
-    // 换算路径生效了
+    // 按住 Shift 时再叠加 ⌥, 换算结果必须和「只按 ⌥」不同。
+    //
+    // 回归测试: v1.3.0 之前 ModifierText 根本不接收事件自带的 flags,
+    // 而且写死了「只加 ⌥」—— 于是 ⌥ 和 ⇧⌥ 算出来都是 "˚",
+    // 用户额外按住的 Shift 被**整个吞掉**。
+    let plain = ModifierText.character(for: 40, holding: .rightOption, eventFlags: [])
+    let shifted = ModifierText.character(for: 40, holding: .rightOption, eventFlags: [.maskShift])
+    expectTrue(plain != shifted,
+               "带 Shift 与不带 Shift 必须算出不同字符 (plain=\(plain ?? "nil") shifted=\(shifted ?? "nil"))")
+
     let action = decideKey(40, [.maskShift], c)
     if case .rewriteText(let s) = action {
         expectTrue(s != "k" && s != "K", "字符应被改写, 实际 '\(s)'")
@@ -223,6 +231,87 @@ testCase("按住修饰键: Codable 往返") {
         return
     }
     expectTrue(back[.sideForward] == .holdModifier(.rightOption), "右 Option 绑定应保留")
+}
+
+// MARK: - 修饰键换算回归 (v1.3.0 修掉的三个 bug)
+
+testCase("修饰键编码: Carbon 常量 >>8 才是 UCKeyTranslate 要的形式") {
+    // 回归测试: Carbon 的 optionKey = 0x0800, 直接传给 UCKeyTranslate
+    // 会**静默失效** —— 实测传 0x0800 得到的是普通 "k" 而不是 "˚"。
+    // 必须右移 8 位取低字节 (cmd=0x01 shift=0x02 option=0x08 control=0x10)。
+    expectTrue(ModifierText.carbonState(from: [.maskAlternate]) == 0x08, "⌥ 应编码为 0x08")
+    expectTrue(ModifierText.carbonState(from: [.maskShift]) == 0x02, "⇧ 应编码为 0x02")
+    expectTrue(ModifierText.carbonState(from: [.maskCommand]) == 0x01, "⌘ 应编码为 0x01")
+    expectTrue(ModifierText.carbonState(from: [.maskControl]) == 0x10, "⌃ 应编码为 0x10")
+    expectTrue(ModifierText.carbonState(from: [.maskAlternate, .maskShift]) == 0x0A, "⌥⇧ 应编码为 0x0A")
+}
+
+testCase("修饰键换算: ⌥ 产出的确实是 ⌥ 变体") {
+    // 键码 40 = K。⌥K 在 US 布局下是 U+02DA (˚)。
+    let c = ModifierText.character(for: 40, holding: .rightOption, eventFlags: [])
+    expectTrue(c == "˚", "⌥K 应算出 ˚, 实际 \(c ?? "nil")")
+}
+
+testCase("修饰键换算: 左/右 Option 结果一致 (字符层面无法区分左右)") {
+    // 回归测试: 之前 translate() 写死 set(optionKey), 于是 ⌘ 和 ⌃
+    // 也被当成 ⌥ —— 「按住左 Command」会打出 "˚", 完全是错的。
+    let left = ModifierText.character(for: 40, holding: .leftOption, eventFlags: [])
+    let right = ModifierText.character(for: 40, holding: .rightOption, eventFlags: [])
+    expectTrue(left == right, "左右 Option 的字符应一致, 实际 \(left ?? "nil") vs \(right ?? "nil")")
+}
+
+testCase("修饰键换算: Command / Control 不改变字形 (交给补 flags 处理)") {
+    // ⌘K 的字符仍是 "k", ⌃K 是控制字符 —— 两者都不该去改写 unicode。
+    expectTrue(!ModifierText.altersGlyph(.leftCommand), "⌘ 不改变字形")
+    expectTrue(!ModifierText.altersGlyph(.rightCommand), "⌘ 不改变字形")
+    expectTrue(!ModifierText.altersGlyph(.leftControl), "⌃ 不改变字形")
+    expectTrue(!ModifierText.altersGlyph(.rightControl), "⌃ 不改变字形")
+    expectTrue(ModifierText.altersGlyph(.leftOption), "⌥ 改变字形")
+    expectTrue(ModifierText.altersGlyph(.rightOption), "⌥ 改变字形")
+    expectTrue(ModifierText.altersGlyph(.shift), "⇧ 改变字形")
+}
+
+testCase("按住 ⌘ 时: 走补 flags 路径, 不改写字符") {
+    // 回归测试: 之前 Command / Control 也走 rewriteText, 于是按住左
+    // Command 会在文本框里打出 "˚"。现在应当只补 modifierFlags。
+    var c = ctx()
+    c.heldModifier = .leftCommand
+    let action = decideKey(40, [], c)
+    if case .rewrite(let kc, let flags) = action {
+        expectTrue(kc == 40, "键码应保持不变, 实际 \(kc)")
+        expectTrue(flags.contains(.maskCommand), "应补上 Command 标志")
+    } else {
+        expectTrue(false, "应走 .rewrite 补 flags, 实际 \(action)")
+    }
+}
+
+testCase("按住 ⌃ 时: 走补 flags 路径, 不改写字符") {
+    var c = ctx()
+    c.heldModifier = .leftControl
+    let action = decideKey(40, [], c)
+    if case .rewrite(let kc, let flags) = action {
+        expectTrue(kc == 40, "键码应保持不变, 实际 \(kc)")
+        expectTrue(flags.contains(.maskControl), "应补上 Control 标志")
+    } else {
+        expectTrue(false, "应走 .rewrite 补 flags, 实际 \(action)")
+    }
+}
+
+testCase("修饰键换算: 缓存区分 Shift 状态") {
+    // 回归测试: 缓存键原本只有 (keyCode, modifier), 不含事件 flags,
+    // 于是「带 Shift」和「不带 Shift」会互相命中缓存, 后查的拿到错字符。
+    let a = ModifierText.character(for: 40, holding: .rightOption, eventFlags: [])
+    let b = ModifierText.character(for: 40, holding: .rightOption, eventFlags: [.maskShift])
+    expectTrue(a != b, "缓存必须区分 Shift 状态 (a=\(a ?? "nil") b=\(b ?? "nil"))")
+    // 再查一次不带 Shift 的, 确认没有拿到被污染的缓存
+    let a2 = ModifierText.character(for: 40, holding: .rightOption, eventFlags: [])
+    expectTrue(a2 == a, "缓存必须稳定返回同一个结果 (a=\(a ?? "nil") a2=\(a2 ?? "nil"))")
+}
+
+testCase("修饰键换算: 功能键在 ⌥ 下回退到补 flags") {
+    // F1 (122) 在 ⌥ 下是 U+0010 (控制字符), 不是文字 —— 必须挡掉。
+    let c = ModifierText.character(for: 122, holding: .rightOption, eventFlags: [])
+    expectTrue(c == nil, "F1 在 ⌥ 下应换算不出字符, 实际 \(c ?? "nil")")
 }
 
 // MARK: - 绝不能误伤真实键盘
